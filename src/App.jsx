@@ -12,7 +12,7 @@ function App() {
       {/* Default redirect to Sign In */}
       <Route path="/" element={<Home />} />
 
-      {/* Auth Routes */}
+ `     {/* Auth Routes */}`
       <Route path="/signin" element={<Login />} />
       <Route path="/signup" element={<Login />} />
       <Route path="/kyc" element={<KYCPage />} />

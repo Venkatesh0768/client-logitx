@@ -37,7 +37,10 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  query,
+  where,
 } from "firebase/firestore";
+import { useAuth } from "../contexts/AuthContext";
 
 const Transition = React.forwardRef((props, ref) => (
   <Slide direction="up" ref={ref} {...props} />
@@ -71,6 +74,7 @@ const initialFormData = {
 const DriverManagement = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const { user } = useAuth();
 
   const [drivers, setDrivers] = useState([]);
   const [search, setSearch] = useState("");
@@ -96,10 +100,13 @@ const DriverManagement = () => {
 
   // Fetch drivers from Firestore
   const fetchDrivers = useCallback(async () => {
+    if (!user) return;
+    
     setLoading(true);
     try {
       const driversRef = collection(db, "Drivers");
-      const driversSnap = await getDocs(driversRef);
+      const driversQuery = query(driversRef, where("userId", "==", user.uid));
+      const driversSnap = await getDocs(driversQuery);
       let allDrivers = [];
       driversSnap.forEach((doc) => {
         allDrivers.push({ id: doc.id, ...doc.data() });
@@ -113,7 +120,7 @@ const DriverManagement = () => {
       });
     }
     setLoading(false);
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     fetchDrivers();
@@ -182,9 +189,19 @@ const DriverManagement = () => {
 
   const handleSubmit = async () => {
     if (!validate()) return;
+    if (!user) {
+      setSnackbar({
+        open: true,
+        message: "User not authenticated",
+        type: "error",
+      });
+      return;
+    }
+    
     try {
+      const driverData = { ...formData, userId: user.uid };
       const driverDocRef = doc(db, "Drivers", formData.mobileNumber);
-      await setDoc(driverDocRef, formData, { merge: true });
+      await setDoc(driverDocRef, driverData, { merge: true });
       await fetchDrivers();
       setSnackbar({
         open: true,
@@ -231,6 +248,19 @@ const DriverManagement = () => {
     setViewData(driver);
     setViewDialogOpen(true);
   };
+
+  if (!user) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Please log in to view drivers</Typography>
+      </Box>
+    );
+  }
 
   return (
     <>

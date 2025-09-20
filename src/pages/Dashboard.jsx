@@ -172,7 +172,6 @@ function Dashboard() {
         return (
           <Tooltip key={item.label} title={open || isMobile ? "" : item.label} placement="right">
             <ListItem
-              button
               selected={location.pathname.startsWith(item.path)}
               onClick={() => {
                 if (isRestricted) {

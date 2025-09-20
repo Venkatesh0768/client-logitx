@@ -37,8 +37,9 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import FilterListIcon from "@mui/icons-material/FilterList";
 import ClearIcon from "@mui/icons-material/Clear";
 import { db } from "../firebaseConfig"; // Adjust the import path as necessary
-import { collection, doc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
+import { collection, doc, getDocs, setDoc, deleteDoc, query, where } from "firebase/firestore";
 import Chip from "@mui/material/Chip";
+import { useAuth } from "../contexts/AuthContext";
 
 const Transition = React.forwardRef((props, ref) => (
   <Slide direction="up" ref={ref} {...props} />
@@ -106,6 +107,7 @@ const STATUS_FILTERS = [
 const OrderManagement = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const { user } = useAuth();
 
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState("");
@@ -132,10 +134,13 @@ const OrderManagement = () => {
 
   // Fetch orders from Firestore
   const fetchOrders = useCallback(async () => {
+    if (!user) return;
+    
     setLoading(true);
     try {
       const ordersRef = collection(db, "AllOrders");
-      const ordersSnap = await getDocs(ordersRef);
+      const ordersQuery = query(ordersRef, where("userId", "==", user.uid));
+      const ordersSnap = await getDocs(ordersQuery);
       let allOrders = [];
       ordersSnap.forEach((doc) => {
         allOrders.push({ id: doc.id, ...doc.data() });
@@ -149,7 +154,7 @@ const OrderManagement = () => {
       });
     }
     setLoading(false);
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     fetchOrders();
@@ -224,9 +229,19 @@ const OrderManagement = () => {
 
   const handleSubmit = async () => {
     if (!validate()) return;
+    if (!user) {
+      setSnackbar({
+        open: true,
+        message: "User not authenticated",
+        type: "error",
+      });
+      return;
+    }
+    
     try {
+      const orderData = { ...formData, userId: user.uid };
       const orderDocRef = doc(db, "AllOrders", formData.order_id);
-      await setDoc(orderDocRef, formData, { merge: true });
+      await setDoc(orderDocRef, orderData, { merge: true });
       await fetchOrders();
       setSnackbar({
         open: true,
@@ -320,6 +335,19 @@ const OrderManagement = () => {
       sanitize(o.booking_status) === sanitize(status)
     ).length;
   };
+
+  if (!user) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Please log in to view orders</Typography>
+      </Box>
+    );
+  }
 
   return (
     <>

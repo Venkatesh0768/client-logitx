@@ -21,7 +21,8 @@ import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import { useTheme } from "@mui/material/styles";
 import { db } from "../firebaseConfig"; // Adjust the import path as necessary
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { useAuth } from "../contexts/AuthContext";
 
 // Leaflet icon fix
 delete L.Icon.Default.prototype._getIconUrl;
@@ -34,6 +35,7 @@ L.Icon.Default.mergeOptions({
 const TrackingUpdates = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const { user } = useAuth();
 
   const [orders, setOrders] = useState([]);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -44,7 +46,11 @@ const TrackingUpdates = () => {
   // Fetch orders from Firestore
   useEffect(() => {
     const fetchOrders = async () => {
-      const snap = await getDocs(collection(db, "AllOrders"));
+      if (!user) return;
+      
+      const ordersRef = collection(db, "AllOrders");
+      const ordersQuery = query(ordersRef, where("userId", "==", user.uid));
+      const snap = await getDocs(ordersQuery);
       const all = [];
       snap.forEach((docItem) => {
         const data = docItem.data();
@@ -77,7 +83,7 @@ const TrackingUpdates = () => {
       setFilteredOrders(all);
     };
     fetchOrders();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     const lower = search.trim().toLowerCase();
@@ -92,6 +98,19 @@ const TrackingUpdates = () => {
   }, [search, orders]);
 
   const activeOrder = filteredOrders[activeIdx] || {};
+
+  if (!user) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Please log in to view tracking updates</Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ width: "100%", p: { xs: 1, md: 3 } }}>

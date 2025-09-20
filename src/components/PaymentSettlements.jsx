@@ -32,11 +32,13 @@ import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
 import { useTheme } from "@mui/material/styles";
 import { db } from "../firebaseConfig"; // Adjust the import path as necessary
-import { collection, getDocs, setDoc, doc } from "firebase/firestore";
+import { collection, getDocs, setDoc, doc, query, where } from "firebase/firestore";
+import { useAuth } from "../contexts/AuthContext";
 
 const PaymentSettlement = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const { user } = useAuth();
 
   const [orders, setOrders] = useState([]);
   const [statusFilter, setStatusFilter] = useState("All");
@@ -52,7 +54,11 @@ const PaymentSettlement = () => {
   // Fetch orders from Firestore
   useEffect(() => {
     const fetchOrders = async () => {
-      const snap = await getDocs(collection(db, "AllOrders"));
+      if (!user) return;
+      
+      const ordersRef = collection(db, "AllOrders");
+      const ordersQuery = query(ordersRef, where("userId", "==", user.uid));
+      const snap = await getDocs(ordersQuery);
       const all = [];
       snap.forEach((docItem) => {
         const data = docItem.data();
@@ -69,7 +75,7 @@ const PaymentSettlement = () => {
       setOrders(all);
     };
     fetchOrders();
-  }, []);
+  }, [user]);
 
   const confirmMarkAsPaid = (order) => {
     setSelectedOrderToMarkPaid(order);
@@ -124,6 +130,19 @@ const PaymentSettlement = () => {
       order.amount.toString().includes(searchText);
     return matchStatus && inDateRange && matchSearch;
   });
+
+  if (!user) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Please log in to view payment settlements</Typography>
+      </Box>
+    );
+  }
 
   return (
     <div>

@@ -22,9 +22,10 @@ import LocalShippingIcon from "@mui/icons-material/LocalShipping";
 import DirectionsCarIcon from "@mui/icons-material/DirectionsCar";
 import CurrencyRupeeIcon from "@mui/icons-material/CurrencyRupee";
 import ShoppingCartIcon from "@mui/icons-material/ShoppingCart";
-import { db } from "../firebaseConfig"; // Adjust the import path as necessary
-import { collection, getDocs } from "firebase/firestore";
+import { db, auth } from "../firebaseConfig"; // Adjust the import path as necessary
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { IndianRupee } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
 
 // Register Chart.js components
 ChartJS.register(
@@ -47,76 +48,120 @@ const DashboardContent = () => {
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [monthlyRevenue, setMonthlyRevenue] = useState([]);
   const [kycPending, setKycPending] = useState(false);
-
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    // Fetch total orders
-    const fetchOrders = async () => {
-      const snap = await getDocs(collection(db, "AllOrders"));
-      setTotalOrders(snap.size);
+    // Check for authenticated user
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      setCurrentUser(user);
+    });
 
-      // Calculate total revenue from orders
-      let revenue = 0;
-      const revenueByMonth = {};
-
-      snap.forEach((doc) => {
-        const data = doc.data();
-        // Parse price or total_amount
-        let amount = 0;
-        if (data.price) {
-          const num = Number(String(data.price).replace(/[^\d.]/g, ""));
-          if (!isNaN(num)) amount = num;
-        } else if (data.total_amount) {
-          const num = Number(data.total_amount);
-          if (!isNaN(num)) amount = num;
-        }
-        revenue += amount;
-
-        // Parse month from createdAt or booking_date
-        let dateObj;
-        if (data.createdAt && data.createdAt.toDate) {
-          dateObj = data.createdAt.toDate();
-        } else if (data.booking_date) {
-          dateObj = new Date(data.booking_date);
-        }
-        if (dateObj) {
-          const month = dateObj.toLocaleString("default", { month: "short" });
-          const year = dateObj.getFullYear();
-          const key = `${month} ${year}`;
-          revenueByMonth[key] = (revenueByMonth[key] || 0) + amount;
-        }
-      });
-
-      setTotalRevenue(revenue);
-
-      // Prepare chart data (last 6 months)
-      const sortedMonths = Object.keys(revenueByMonth)
-        .sort((a, b) => new Date(a) - new Date(b))
-        .slice(-6);
-      setMonthlyRevenue(
-        sortedMonths.map((m) => ({
-          label: m,
-          value: revenueByMonth[m],
-        }))
-      );
-    };
-
-    // Fetch active drivers
-    const fetchDrivers = async () => {
-      const snap = await getDocs(collection(db, "Drivers"));
-      setActiveDrivers(snap.size);
-    };
-
-    // Fetch vehicles in use (example: count all vehicles)
-    const fetchVehicles = async () => {
-      const snap = await getDocs(collection(db, "Vehicles"));
-      setVehiclesInUse(snap.size);
-    };
-
-    fetchOrders();
-    fetchDrivers();
-    fetchVehicles();
+    return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!user) return;
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        // Fetch all data in parallel for better performance
+        const [ordersSnap, driversSnap, vehiclesSnap] = await Promise.all([
+          getDocs(
+            query(collection(db, "AllOrders"), where("userId", "==", user.uid))
+          ),
+          getDocs(
+            query(
+              collection(db, "Drivers"),
+              where("userId", "==", user.uid),
+              where("status", "==", "active")
+            )
+          ),
+          getDocs(
+            query(
+              collection(db, "Vehicles"),
+              where("userId", "==", user.uid)
+            )
+          ),
+        ]);
+
+        // Process orders and revenue
+        let totalRev = 0;
+        const monthlyRev = {};
+
+        ordersSnap.forEach((doc) => {
+          const data = doc.data();
+          const amount =
+            parseFloat(
+              data.price?.toString().replace(/[^\d.]/g, "") ||
+                data.total_amount ||
+                0
+            ) || 0;
+
+          if (!isNaN(amount)) {
+            totalRev += amount;
+
+            // Handle different date formats safely
+            let date;
+            try {
+              if (data.createdAt && typeof data.createdAt.toDate === 'function') {
+                // Firestore Timestamp
+                date = data.createdAt.toDate();
+              } else if (data.createdAt && data.createdAt.seconds) {
+                // Firestore Timestamp as object
+                date = new Date(data.createdAt.seconds * 1000);
+              } else if (data.createdAt) {
+                // Regular Date object or string
+                date = new Date(data.createdAt);
+              } else if (data.booking_date) {
+                // Fallback to booking_date
+                date = new Date(data.booking_date);
+              } else {
+                // Use current date as fallback
+                date = new Date();
+              }
+            } catch (error) {
+              console.warn('Error parsing date:', error, 'Using current date');
+              date = new Date();
+            }
+
+            if (date instanceof Date && !isNaN(date.getTime())) {
+              const key = `${date.toLocaleString("default", {
+                month: "short",
+              })} ${date.getFullYear()}`;
+              monthlyRev[key] = (monthlyRev[key] || 0) + amount;
+            }
+          }
+        });
+
+        // Update state
+        setTotalOrders(ordersSnap.size);
+        setActiveDrivers(driversSnap.size);
+        setVehiclesInUse(vehiclesSnap.size);
+        setTotalRevenue(totalRev);
+
+        // Process monthly revenue
+        const sortedMonths = Object.entries(monthlyRev)
+          .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+          .slice(-6)
+          .map(([label, value]) => ({ label, value }));
+
+        setMonthlyRevenue(sortedMonths);
+      } catch (err) {
+        console.error("Dashboard data fetch error:", err);
+        setError("Failed to load dashboard data. Please try again later.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [user]);
 
   // Chart data from monthlyRevenue state
   const revenueData = {
@@ -179,6 +224,45 @@ const DashboardContent = () => {
     },
   ];
 
+  if (authLoading || loading) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Loading dashboard data...</Typography>
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography color="error">{error}</Typography>
+      </Box>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Please log in to view dashboard</Typography>
+      </Box>
+    );
+  }
+
   return (
     <Box>
       <Typography
@@ -195,7 +279,7 @@ const DashboardContent = () => {
         container
         spacing={isMobile ? 7 : 4}
         justifyContent={isMobile ? "center" : "flex-start"}
-        sx={{ 
+        sx={{
           mb: { xs: 2, sm: 3, md: 4 },
           mt: { xs: 2, sm: 3, md: 4 },
         }}

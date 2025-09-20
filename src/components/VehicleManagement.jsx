@@ -46,7 +46,10 @@ import {
   setDoc,
   deleteDoc,
   getDoc,
+  query,
+  where,
 } from "firebase/firestore";
+import { useAuth } from "../contexts/AuthContext";
 
 // --- CONSTANTS ---
 const DIALOGS = {
@@ -56,7 +59,7 @@ const DIALOGS = {
   VIEW: "VIEW",
   DELETE: "DELETE",
 };
-const VEHICLE_COLLECTION_PATH = "Vehicles/Trailer/Companies";
+const VEHICLE_COLLECTION_PATH = "Vehicles";
 
 const initialFormState = {
   available_wheels: "",
@@ -72,89 +75,37 @@ const initialFormState = {
 // --- API/SERVICE LAYER ---
 const vehicleService = {
   
-  getVehicles: async () => {
-    const companiesRef = collection(db, VEHICLE_COLLECTION_PATH);
-    const companiesSnap = await getDocs(companiesRef);
+  getVehicles: async (userId) => {
+    if (!userId) return [];
+    
+    const vehiclesRef = collection(db, VEHICLE_COLLECTION_PATH);
+    const vehiclesQuery = query(vehiclesRef, where("userId", "==", userId));
+    const vehiclesSnap = await getDocs(vehiclesQuery);
     const allVehicles = [];
-
-    for (const companyDoc of companiesSnap.docs) {
-      const companyName = companyDoc.id;
-      const subtypesRef = collection(companyDoc.ref, "subtypes");
-      const subtypesSnap = await getDocs(subtypesRef);
-
-      if (subtypesSnap.empty) {
-        allVehicles.push({
-          id: `${companyName}-placeholder`,
-          company_name: companyName,
-          isPlaceholder: true, 
-        });
-      } else {
-        subtypesSnap.docs.forEach((subtypeDoc) => {
-          allVehicles.push({
-            ...subtypeDoc.data(),
-            id: subtypeDoc.id,
-            subtype: subtypeDoc.id,
-            company_name: companyName,
-          });
-        });
-      }
-    }
+    
+    vehiclesSnap.forEach((doc) => {
+      allVehicles.push({
+        id: doc.id,
+        ...doc.data(),
+      });
+    });
+    
     return allVehicles;
   },
 
 
-  saveVehicle: async (vehicleData, originalVehicle) => {
+  saveVehicle: async (vehicleData, originalVehicle, userId) => {
+    if (!userId) throw new Error("User not authenticated");
     
-    const companyDocRef = doc(
-      db,
-      VEHICLE_COLLECTION_PATH,
-      vehicleData.company_name
-    );
-    await setDoc(companyDocRef, { exists: true }, { merge: true });
-
-    if (
-      originalVehicle &&
-      (originalVehicle.company_name !== vehicleData.company_name ||
-        originalVehicle.subtype !== vehicleData.subtype)
-    ) {
-      const oldSubtypeRef = doc(
-        db,
-        `${VEHICLE_COLLECTION_PATH}/${originalVehicle.company_name}/subtypes`,
-        originalVehicle.subtype
-      );
-      await deleteDoc(oldSubtypeRef);
-    }
-
-    const newSubtypeRef = doc(
-      db,
-      `${VEHICLE_COLLECTION_PATH}/${vehicleData.company_name}/subtypes`,
-      vehicleData.subtype
-    );
-    await setDoc(newSubtypeRef, vehicleData);
+    const vehicleDocRef = doc(db, VEHICLE_COLLECTION_PATH, vehicleData.id || Date.now().toString());
+    const vehicleDataWithUser = { ...vehicleData, userId };
+    await setDoc(vehicleDocRef, vehicleDataWithUser, { merge: true });
   },
 
 
   deleteVehicle: async (vehicle) => {
-    const subtypeRef = doc(
-      db,
-      `${VEHICLE_COLLECTION_PATH}/${vehicle.company_name}/subtypes`,
-      vehicle.subtype
-    );
-    await deleteDoc(subtypeRef);
-    const subtypesCollectionRef = collection(
-      db,
-      `${VEHICLE_COLLECTION_PATH}/${vehicle.company_name}/subtypes`
-    );
-    const remainingSubtypes = await getDocs(subtypesCollectionRef);
-
-    if (remainingSubtypes.empty) {
-      const companyDocRef = doc(
-        db,
-        VEHICLE_COLLECTION_PATH,
-        vehicle.company_name
-      );
-      await deleteDoc(companyDocRef);
-    }
+    const vehicleRef = doc(db, VEHICLE_COLLECTION_PATH, vehicle.id);
+    await deleteDoc(vehicleRef);
   },
 };
 
@@ -205,13 +156,16 @@ const Transition = React.forwardRef((props, ref) => (
 
 // --- MAIN COMPONENT ---
 const VehicleManagement = () => {
+  const { user } = useAuth();
   const [state, dispatch] = useReducer(vehicleReducer, initialState);
   const [searchQuery, setSearchQuery] = useState("");
 
   const fetchAndSetVehicles = useCallback(async () => {
+    if (!user) return;
+    
     dispatch({ type: "FETCH_START" });
     try {
-      const data = await vehicleService.getVehicles();
+      const data = await vehicleService.getVehicles(user.uid);
       dispatch({ type: "FETCH_SUCCESS", payload: data });
     } catch (error) {
       dispatch({
@@ -219,7 +173,7 @@ const VehicleManagement = () => {
         payload: `Failed to fetch vehicles: ${error.message}`,
       });
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     fetchAndSetVehicles();
@@ -240,8 +194,16 @@ const VehicleManagement = () => {
   const handleSnackbarClose = () => dispatch({ type: "HIDE_SNACKBAR" });
 
   const handleSave = async (formData, originalVehicle) => {
+    if (!user) {
+      dispatch({
+        type: "SHOW_SNACKBAR",
+        payload: { message: "User not authenticated", type: "error" },
+      });
+      return;
+    }
+    
     try {
-      await vehicleService.saveVehicle(formData, originalVehicle);
+      await vehicleService.saveVehicle(formData, originalVehicle, user.uid);
       handleDialogClose();
       dispatch({
         type: "SHOW_SNACKBAR",
@@ -279,6 +241,19 @@ const VehicleManagement = () => {
       });
     }
   };
+
+  if (!user) {
+    return (
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
+        <Typography>Please log in to view vehicles</Typography>
+      </Box>
+    );
+  }
 
   return (
     <>
@@ -426,56 +401,40 @@ function VehicleTable({ vehicles, loading, onView, onEdit, onDelete }) {
             </TableRow>
           ) : (
             vehicles.map((v) => (
-              <TableRow key={`${v.company_name}-${v.id}`} hover>
-                {v.isPlaceholder ? (
-                  <>
-                    <TableCell>
-                      <i>{v.company_name}</i>
-                    </TableCell>
-                    <TableCell colSpan={tableHeaders.length - 1}>
-                      <i>No vehicle subtypes defined for this company.</i>
-                    </TableCell>
-                  </>
-                ) : (
-                  <>
-                    {/* --- MODIFICATION START --- */}
-                    <TableCell>
-                      {v.company_url ? (
-                        <Link
-                          href={v.company_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          sx={{ fontWeight: "medium" }}
-                        >
-                          {v.company_name}
-                        </Link>
-                      ) : (
-                        v.company_name 
-                      )}
-                    </TableCell>
-                   
-
-                    <TableCell>{v.subtype}</TableCell>
-                    <TableCell>{v.vehicle_type}</TableCell>
-                    <TableCell>{v.capacity}</TableCell>
-                    <TableCell>{v.available_wheels}</TableCell>
-                    <TableCell>{v.price_per_kg}</TableCell>
-                    <TableCell>{v.price_per_tonne}</TableCell>
-                    <TableCell align="center">
-                      <Stack direction="row" spacing={0}>
-                        <IconButton onClick={() => onView(v)} color="info">
-                          <VisibilityIcon />
-                        </IconButton>
-                        <IconButton onClick={() => onEdit(v)} color="primary">
-                          <EditIcon />
-                        </IconButton>
-                        <IconButton onClick={() => onDelete(v)} color="error">
-                          <DeleteIcon />
-                        </IconButton>
-                      </Stack>
-                    </TableCell>
-                  </>
-                )}
+              <TableRow key={v.id} hover>
+                <TableCell>
+                  {v.company_url ? (
+                    <Link
+                      href={v.company_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ fontWeight: "medium" }}
+                    >
+                      {v.company_name}
+                    </Link>
+                  ) : (
+                    v.company_name 
+                  )}
+                </TableCell>
+                <TableCell>{v.subtype}</TableCell>
+                <TableCell>{v.vehicle_type}</TableCell>
+                <TableCell>{v.capacity}</TableCell>
+                <TableCell>{v.available_wheels}</TableCell>
+                <TableCell>{v.price_per_kg}</TableCell>
+                <TableCell>{v.price_per_tonne}</TableCell>
+                <TableCell align="center">
+                  <Stack direction="row" spacing={0}>
+                    <IconButton onClick={() => onView(v)} color="info">
+                      <VisibilityIcon />
+                    </IconButton>
+                    <IconButton onClick={() => onEdit(v)} color="primary">
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton onClick={() => onDelete(v)} color="error">
+                      <DeleteIcon />
+                    </IconButton>
+                  </Stack>
+                </TableCell>
               </TableRow>
             ))
           )}

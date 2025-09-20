@@ -1,24 +1,22 @@
 // src/components/VehicleList.jsx
 import React, { useEffect, useState } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebaseConfig"; // Adjust the import path as necessary
+import { useAuth } from "../contexts/AuthContext";
 
 const VehicleList = ({ companyName = "Blue Dart" }) => {
+  const { user } = useAuth();
   const [vehicles, setVehicles] = useState([]);
 
   useEffect(() => {
     const fetchVehicles = async () => {
-      const subtypesRef = collection(
-        db,
-        "Vehicles",
-        "Trailer",
-        "Companies",
-        companyName,
-        "subtypes"
-      );
+      if (!user) return;
+      
+      const vehiclesRef = collection(db, "Vehicles");
+      const vehiclesQuery = query(vehiclesRef, where("userId", "==", user.uid));
 
       try {
-        const snapshot = await getDocs(subtypesRef);
+        const snapshot = await getDocs(vehiclesQuery);
         const data = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
@@ -30,18 +28,26 @@ const VehicleList = ({ companyName = "Blue Dart" }) => {
     };
 
     fetchVehicles();
-  }, [companyName]);
+  }, [user]);
+
+  if (!user) {
+    return (
+      <div style={{ padding: "20px" }}>
+        <p>Please log in to view vehicles</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: "20px" }}>
-      <h2>Vehicles for {companyName}</h2>
+      <h2>Your Vehicles</h2>
       {vehicles.length === 0 ? (
         <p>No vehicles found.</p>
       ) : (
         <ul>
           {vehicles.map(vehicle => (
             <li key={vehicle.id}>
-              <strong>{vehicle.id}</strong> – {vehicle.vehicle_type}, {vehicle.capacity} units
+              <strong>{vehicle.company_name || vehicle.id}</strong> – {vehicle.vehicle_type}, {vehicle.capacity} units
             </li>
           ))}
         </ul>
