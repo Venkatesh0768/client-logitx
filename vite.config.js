@@ -9,13 +9,28 @@ export default defineConfig({
     react()
   ],
 
-  // server: {
-  //   port: 5174,
-  //   allowedHosts: ["16abc65a965f.ngrok-free.app"], 
-  //   host: true,
-  // },
+  server: {
+    port: 5173,
+    allowedHosts: ["41e59de834cb.ngrok-free.app"], 
+    host: true,
+  },
 
-  // optimizeDeps: {
-  //   include: ['date-fns'],
-  // },
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          mui: ['@mui/material', '@mui/icons-material'],
+          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore']
+        }
+      }
+    }
+  },
+
+  optimizeDeps: {
+    include: ['date-fns'],
+  },
 })
